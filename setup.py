@@ -8,6 +8,7 @@ setup(
         "flask",
         "flask-socketio",
         #"python-dotenv",
+        "safetensors",
         "Flask-Cors",
         "flax",
         #"gunicorn"

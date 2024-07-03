@@ -1,13 +1,14 @@
-from flax import serialization
-from base64 import b64encode
 
+from base64 import b64encode
 import jax
 import jax.numpy as jnp
 import json
-import numpy as np
 from flask_socketio import emit
+from flax import serialization
 import io
 from PIL import Image
+import numpy as np
+
 
 def serialize_rng(rng: jax.Array):
     return tuple(int(i) for i in rng)

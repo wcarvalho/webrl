@@ -1,8 +1,12 @@
+from typing import Optional, List, Callable, Any
 from flask import render_template
 from flask_socketio import emit
-import jax_utils
+from flax import struct
+import jax
 
-from managers import SessionManager
+from webrl.jax_utils import JaxWebEnvironment
+from webrl.base_managers import BaseSessionManager, BaseStageManager
+from webrl.session_manager import SessionManager
 
 
 def update_html_content(
@@ -14,7 +18,7 @@ def update_html_content(
         'stage_idx': stage_manager.idx,
         'subtitle': stage.subtitle,
         'body': stage.body,
-        'envcaption': stage.envcaption,
+        #'envcaption': stage.envcaption,
         **kwargs,
     })
 
@@ -102,15 +106,21 @@ def start_upload_stage(
     stage_manager.upload_data()
     stage_manager.maybe_start_count_down()
 
-def handle_stage_navigation_key_press(stage_manager, json, **kwargs):
+def handle_stage_navigation_key_press(
+        stage_manager,
+        web_env,
+        json,
+        **kwargs):
     key = json['key']
     if key in ('ArrowLeft', 'ArrowRight'):
         direction = {
             'ArrowLeft': 'left',
             'ArrowRight': 'right',
         }[key]
-        stage_manager.shift_stage(direction)
-
+        stage_manager.shift_stage(
+            direction=direction,
+            web_env=web_env,
+            )
 
 def handle_environment_key_press(
         stage_manager,
@@ -206,8 +216,9 @@ def handle_environment_key_press(
             # save all data
             SessionManager.save_progress(
                 experiment_state=stage_manager.state,
-                data_manager_state=dict(episode_data=data_manager.all_episode_data,
-                     stage_data=data_manager.stage_data),
+                data_manager_state=dict(
+                    all_episode_data=data_manager.all_episode_data,
+                    stage_data=data_manager.stage_data),
                 )
             stage_manager.shift_stage('right')
 
@@ -264,3 +275,45 @@ def advance_no_interaction_timer(stage_manager, data_manager, web_env):
         )
     # Define the logic to be executed when the timer finishes
     stage_manager.shift_stage('right')
+
+
+DefaultFnCall = Callable[
+    [BaseStageManager, BaseSessionManager, JaxWebEnvironment], Any]
+
+@struct.dataclass
+class BaseStage:
+    html: str
+    title: Optional[str] = ''
+    subtitle: Optional[str] = ''
+    body: Optional[str] = ''
+
+@struct.dataclass
+class Stage(BaseStage):
+
+    seconds: Optional[int] = None
+    start_stage: DefaultFnCall = start_stage
+    update_html_content: DefaultFnCall = update_html_content
+    handle_key_press: DefaultFnCall = handle_stage_navigation_key_press
+    handle_timer_finish: DefaultFnCall = advance_on_timer_finish
+
+
+
+@struct.dataclass
+class EnvironmentStage(Stage):
+    envcaption: Optional[str] = ''
+    env_params: Optional[struct.PyTreeNode] = None
+    restart: bool = True
+    show_progress: bool = True
+    show_goal: bool = True
+    max_episodes: Optional[int] = 10
+    min_success: Optional[int] = 1
+    count_down_started: bool = False
+    t: int = 0
+    ep_idx: int = 0
+    num_success: int = 0
+
+    start_stage: DefaultFnCall = start_environment_stage
+    update_html_content: DefaultFnCall = update_environment_html_content
+    handle_key_press: DefaultFnCall = handle_environment_key_press
+
+
