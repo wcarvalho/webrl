@@ -14,7 +14,7 @@ def update_html_content(
       **kwargs):
   stage = stage_manager.stage
   emit('update_html_fields', {
-        'title': stage.title,
+        'title': stage_manager.make_stage_title(),
         'stage_idx': stage_manager.idx,
         'subtitle': stage.subtitle,
         'body': stage.body,
@@ -33,9 +33,9 @@ def update_environment_html_content(
         subtitle += f"<br>Episodes: {stage.ep_idx}/{stage.max_episodes}"
 
 
-    task = web_env.get_task_name(web_env.timestep) if stage.show_goal else ''
+    task = web_env.task_name(web_env.timestep) if stage.show_goal else ''
     emit('update_html_fields', {
-        'title': stage_manager.make_stage_title(stage),
+        'title': stage_manager.make_stage_title(),
         'stage_idx': stage_manager.idx,
         'subtitle': subtitle,
         'taskDesc': task,
@@ -66,6 +66,8 @@ def start_environment_stage(
     if stage.restart:
         rng = SessionManager.split_rng(stage_manager)
         timestep = web_env.reset(stage.env_params, rng)
+    else:
+        timestep = web_env.timestep
 
     emit('update_content', {
         'content': render_template(stage.html),
@@ -108,7 +110,6 @@ def start_upload_stage(
 
 def handle_stage_navigation_key_press(
         stage_manager,
-        web_env,
         json,
         **kwargs):
     key = json['key']
@@ -118,9 +119,7 @@ def handle_stage_navigation_key_press(
             'ArrowRight': 'right',
         }[key]
         stage_manager.shift_stage(
-            direction=direction,
-            web_env=web_env,
-            )
+            direction=direction)
 
 def handle_environment_key_press(
         stage_manager,
@@ -143,8 +142,9 @@ def handle_environment_key_press(
 
         # update database with image, action, + times of each
         data_manager.update_in_episode_data(
-            json,
-            web_env,
+            socket_json=json,
+            stage_idx=stage_idx,
+            web_env=web_env,
         )
 
         # take action
@@ -177,6 +177,8 @@ def handle_environment_key_press(
                 color = 'green' if success else 'red'
                 label = f'<span style="color: {color}; font-weight: bold; font-size: 1.5em;">{label}!</span><br>'
             stage.update_html_content(
+                stage_manager=stage_manager,
+                web_env=web_env,
                 taskDesc=f"{label}restarting. press any key to continue.",
             )
         else:
@@ -208,7 +210,7 @@ def handle_environment_key_press(
         # update to next stage
         # ------------
         if go_to_next_stage:
-            data_manager.update_stage_information(
+            data_manager.update_stage_data(
                 stage=stage_manager.stage,
                 stage_idx=stage_manager.idx,
             )
@@ -226,6 +228,7 @@ def handle_environment_key_press(
         # reset environment
         # ------------
         else:
+            rng = SessionManager.split_rng(stage_manager)
             timestep = web_env.reset(stage.env_params, rng)
             raw_state, encoded_image = web_env.timestep_output(
                 stage=stage,
@@ -258,7 +261,7 @@ def advance_no_interaction_timer(stage_manager, data_manager, web_env):
             "action": -1000,
         }
     )
-    data_manager.update_stage_information(
+    data_manager.update_stage_data(
         stage=stage_manager.stage,
         stage_idx=stage_manager.idx,
         **{

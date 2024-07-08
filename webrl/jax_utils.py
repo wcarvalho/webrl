@@ -16,7 +16,7 @@ def serialize_rng(rng: jax.Array):
 def unserialize_rng(rng_tuple):
     return jnp.array(rng_tuple, dtype=jnp.uint32)
 
-def array_to_python(obj):
+def convert_to_serializable(obj):
     """Convert JAX objects to Python objects"""
     if isinstance(obj, (jnp.ndarray, np.ndarray)):
         if isinstance(obj, jnp.ndarray):
@@ -25,21 +25,20 @@ def array_to_python(obj):
     #elif isinstance(obj, (int, float, str, bool)):
     #    return obj
     elif isinstance(obj, dict):
-        return {k: array_to_python(v) for k, v in obj.items()}
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):
-        return [array_to_python(v) for v in obj]
+        return [convert_to_serializable(v) for v in obj]
     #elif hasattr(obj, '__dict__'):
     #    return array_to_python(vars(obj))
     else:
         return obj
 
-def serialize(pytree, jsonify: bool = True):
+def serialize_pytree(pytree, jsonify: bool = True):
     pytree = serialization.to_state_dict(pytree)
-    pytree = array_to_python(pytree)
+    pytree = convert_to_serializable(pytree)
     if jsonify:
         return json.dumps(pytree)
     return pytree
-
 
 
 def encode_image(state_image):
@@ -52,13 +51,14 @@ def encode_image(state_image):
 def default_timestep_output(
         stage,
         timestep,
-        encode_locally: bool = False):
+        encode_locally: bool = False,
+        **kwargs):
     if encode_locally:
          state_image = stage.render_fn(timestep, stage.env_params)
          processed_image = encode_image(state_image)
          return None, processed_image
     else:
-        state = serialize(timestep.state, jsonify=False)
+        state = serialize_pytree(timestep.state, jsonify=False)
         return state, None
 
 def default_evaluate_success(timestep):
@@ -71,7 +71,8 @@ class JaxWebEnvironment:
             env,
             keyparser,
             timestep_output_fn = None,
-            evaluate_success_fn = None
+            evaluate_success_fn = None,
+            task_name_fn = None
             ):
         self.env = env
         self.keyparser = keyparser
@@ -84,6 +85,10 @@ class JaxWebEnvironment:
         if evaluate_success_fn is None:
             evaluate_success_fn = default_evaluate_success
         self.evaluate_success = evaluate_success_fn
+
+        if task_name_fn is None:
+            def task_name_fn(*args, **kwargs): 'task'
+        self.task_name = task_name_fn
 
 
     def reset(self, env_params, rng):
