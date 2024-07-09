@@ -1,11 +1,13 @@
 
 from flask import render_template
 from flask_socketio import emit
+from flask import render_template_string
 from flax import serialization
 from flax import struct
 import json
 
 from typing import List, Optional, Callable, List
+import os.path
 
 import jax
 from webrl import jax_utils
@@ -23,15 +25,15 @@ class DataManager(bases.BaseDataManager):
         return dict(
             all_episode_data=[],
             stage_data=[]
-        ),
+        )
 
     def load_state(self, state: struct.PyTreeNode):
         all_episode_data = state.get('all_episode_data')
-        if all_episode_data:
+        if all_episode_data is not None:
             self.all_episode_data = all_episode_data
             print("loaded all_episode_data")
         stage_data = state.get('stage_data')
-        if stage_data:
+        if stage_data is not None:
             self.stage_data = stage_data
             print("loaded stage_data")
 
@@ -103,11 +105,13 @@ class StageManager(bases.BaseStageManager):
 
     def __init__(
             self,
+            app,
             stages: List[struct.PyTreeNode],
             data_manager: DataManager,
             web_env: JaxWebEnvironment,
             index_file: str = 'index.html',
             debug: bool = False):
+        self.app = app
         self._state = None
         self.debug = debug
         self.stages = stages
@@ -116,6 +120,13 @@ class StageManager(bases.BaseStageManager):
         self.web_env = web_env
 
     def init_state(self, rng=None):
+        if rng is None:
+            rng = SessionManager.get('rng')
+            if rng:
+                rng = jax_utils.unserialize_rng(rng)
+            else:
+                rng = jax.random.PRNGKey(SessionManager.get('user_seed'))
+
         return ExperimentState(
             unique_id=SessionManager.get('unique_id'),
             stages=self.stages,
@@ -125,31 +136,35 @@ class StageManager(bases.BaseStageManager):
 
     def set_state(self, state: ExperimentState):
         self._state = state
-        SessionManager.set('rng', state.rng)
+        SessionManager.set('rng', jax_utils.serialize_rng(state.rng))
+        print(f"Set session rng to {state.rng}=={SessionManager.get('rng')}")
 
     def render_stage(self):
         return self.render_template(self.index_file, template_file=self.stage.html)
 
-    @property
-    def state(self):
+    def maybe_load_state(self):
         if self._state is None:
+            print("-"*25)
             print('trying loading user_seed', SessionManager.get('user_seed'))
-            experiment_state, data_manager_state = SessionManager.load_progress()
+
+            experiment_state, data_manager_state = SessionManager.load_progress(
+                example_experiment_state=self.init_state(),
+                example_data_manager_state=self.data_manager.init_state(),
+            )
             if not experiment_state and not data_manager_state:
                 print("Nothing found. resetting state...")
-                rng = SessionManager.get(
-                    'rng', jax.random.PRNGKey(SessionManager.get('user_seed')))
-                experiment_state = self.init_state(
-                    rng=jax_utils.serialize_rng(rng))
+                experiment_state = self.init_state()
                 data_manager_state = self.data_manager.init_state()
 
-            if experiment_state:
-                self.set_state(experiment_state)
-                print('LOADED experiment_state')
-            if data_manager_state:
-                self.data_manager.load_state(data_manager_state)
-                print('LOADED data_manager_state')
+            self.set_state(experiment_state)
+            print(f'LOADED experiment_state: {experiment_state.summary()}')
 
+            self.data_manager.load_state(data_manager_state)
+            print('LOADED data_manager_state')
+            return True
+        return False
+    @property
+    def state(self):
         return self._state
 
     @property
@@ -174,13 +189,36 @@ class StageManager(bases.BaseStageManager):
         else:
             return self.stage.title
 
+
+    def start_stage(self):
+        self.stage.start_stage(
+            stage_manager=self,
+            web_env=self.web_env)
+
     def update_html_content(self):
-        self.stage.update_html_content(self)
+        self.stage.update_html_content(
+            stage_manager=self,
+            web_env=self.web_env,
+            )
 
     def render_stage(self):
         return render_template(
             self.index_file,
             template_file=self.stage.html)
+
+    def render_stage_template(self):
+       with self.app.app_context():
+        index_file_path = os.path.join(
+        self.app.template_folder, self.index_file)
+        with open(index_file_path, 'r') as file:
+            template_content = file.read()
+        emit('update_content', {
+            'template': template_content,
+        })
+        self.stage.start_stage(
+            stage_manager=self,
+            web_env=self.web_env,
+        )
 
     def decrement_stage_idx(self):
         stage_idx = self.state.stage_idx

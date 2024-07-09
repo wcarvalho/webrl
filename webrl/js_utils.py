@@ -10,21 +10,26 @@ from webrl.session_manager import SessionManager
 
 
 def update_html_content(
-      stage_manager,
-      **kwargs):
+    stage_manager,
+    return_only: bool = False,
+    **kwargs):
   stage = stage_manager.stage
-  emit('update_html_fields', {
-        'title': stage_manager.make_stage_title(),
-        'stage_idx': stage_manager.idx,
-        'subtitle': stage.subtitle,
-        'body': stage.body,
-        #'envcaption': stage.envcaption,
-        **kwargs,
-    })
+  content = {
+      'title': stage_manager.make_stage_title(),
+      'stage_idx': stage_manager.idx,
+      'subtitle': stage.subtitle,
+      'body': stage.body,
+      # 'envcaption': stage.envcaption,
+      **kwargs,
+  }
+  if return_only:
+      return content
+  emit('update_html_fields', content)
 
 def update_environment_html_content(
       stage_manager,
       web_env,
+      return_only: bool = False,
       **kwargs):
     stage = stage_manager.stage
     subtitle = stage.subtitle
@@ -34,7 +39,7 @@ def update_environment_html_content(
 
 
     task = web_env.task_name(web_env.timestep) if stage.show_goal else ''
-    emit('update_html_fields', {
+    content = {
         'title': stage_manager.make_stage_title(),
         'stage_idx': stage_manager.idx,
         'subtitle': subtitle,
@@ -42,7 +47,11 @@ def update_environment_html_content(
         'body': stage.body,
         'envcaption': stage.envcaption,
         **kwargs,
-    })
+    }
+    if return_only:
+        print("return content only")
+        return content
+    emit('update_html_fields', content)
 
 def start_stage(
         stage_manager,

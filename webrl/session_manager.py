@@ -2,6 +2,8 @@
 import sys
 import pickle
 import importlib
+import numpy as np
+import jax.numpy as jnp
 from flask import session
 from flask import render_template
 from flask import redirect, url_for
@@ -26,6 +28,9 @@ class ExperimentState:
     stage_idx: int
     rng: jax.numpy.ndarray
 
+    def summary(self):
+        return f'unique_id={self.unique_id}, stage_idx={self.stage_idx}'
+
 
 def save_pytree(pytree: struct.PyTreeNode, filename: str):
 
@@ -35,6 +40,10 @@ def save_pytree(pytree: struct.PyTreeNode, filename: str):
         return x
     pytree = jax.tree_map(remove_callable, pytree)
 
+    def asarray(x):
+        return np.asarray(x) if isinstance(x, jnp.ndarray) else x
+    pytree = jax.tree_map(asarray, pytree)
+
     # Get the class of the pytree
     cls = type(pytree)
 
@@ -42,14 +51,14 @@ def save_pytree(pytree: struct.PyTreeNode, filename: str):
     module_name = cls.__module__
     class_name = cls.__name__
 
-    # Serialize the pytree
-    serialized_state = serialization.to_bytes(pytree)
+    ## Serialize the pytree
+    #serialized_state = serialization.to_bytes(pytree)
 
     # Create a dictionary with all the necessary information
     data = {
         'module_name': module_name,
         'class_name': class_name,
-        'state': serialized_state
+        'pytree': pytree
     }
 
 
@@ -70,18 +79,29 @@ def load_pytree(filename: str) -> struct.PyTreeNode:
     # Extract the information
     module_name = data['module_name']
     class_name = data['class_name']
-    serialized_state = data['state']
+    pytree = data['pytree']
 
     # Import the module and get the class
     module = importlib.import_module(module_name)
     cls = getattr(module, class_name)
 
-    # Deserialize the state
-    return serialization.from_bytes(cls, serialized_state)
+    return pytree, cls
+
+def load_experiment_state(filename, example):
+    loaded, _ = load_pytree(filename)
+
+    # new = example if field is Callable in example else from loaded
+    def update_field(e, l):
+        return e if callable(e) else l
+    return jax.tree_map(update_field, example, loaded)
+
 
 class SessionManager(bases.BaseSessionManager):
 
-    def __init__(self, index_file: str = 'index.html', debug: bool = False):
+    def __init__(
+            self,
+            index_file: str = 'index.html',
+            debug: bool = False):
         self.idx = 0
         self.state = None
         self.debug = debug
@@ -139,7 +159,10 @@ class SessionManager(bases.BaseSessionManager):
         print(f"saved: {filename}")
 
     @staticmethod
-    def load_progress():
+    def load_progress(
+        example_experiment_state,
+        example_data_manager_state,
+        ):
         user_seed = session['user_seed']
 
         experiment_state = None
@@ -147,14 +170,16 @@ class SessionManager(bases.BaseSessionManager):
         # load experiment state
         filename = f'data/{user_seed}_experiment_state.safetensors'
         if os.path.exists(filename):
-            experiment_state = load_pytree(filename)
+            
+            experiment_state = load_experiment_state(
+                filename, example_experiment_state)
             print(f"loaded: {filename}")
 
 
         # load experiment state
         if os.path.exists(filename):
             filename = f'data/{user_seed}_data_manager_state.safetensors'
-            data_manager_state = load_pytree(filename)
+            data_manager_state, _ = load_pytree(filename)
             print(f"loaded: {filename}")
 
         return experiment_state, data_manager_state
